@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DermaScan AI — 3D v4</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #e8ebf0; overflow: hidden; height: 100vh; font-family: 'Segoe UI', sans-serif; }
+  #c { display: block; }
+  .ui { position: fixed; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; }
+  .title { position: absolute; top: 22px; left: 30px; }
+  .title h1 { font-size: 1.2rem; font-weight: 800; color: #1a2540; letter-spacing: 0.1em; }
+  .title p  { font-size: 0.62rem; color: #7a8aaa; letter-spacing: 0.16em; text-transform: uppercase; margin-top: 2px; }
+
+  .bottom {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid rgba(255,255,255,0.75);
+  }
+  .specs { display: flex; gap: 28px; }
+  .sp .v { font-size: 0.95rem; font-weight: 800; color: #1a2540; }
+  .sp .l { font-size: 0.58rem; color: #8a9aaa; letter-spacing: 0.1em; text-transform: uppercase; margin-top: 1px; }
+
+  .view-btns { display: flex; gap: 6px; pointer-events: all; }
+  .vb {
+    font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 6px 12px; border-radius: 20px;
+    border: 1.5px solid #c8d0e0; background: rgba(255,255,255,0.8); color: #4a5a7a;
+    cursor: pointer; transition: all 0.18s;
+  }
+  .vb:hover, .vb.on { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .hint { font-size: 0.6rem; color: #9aaab0; letter-spacing: 0.1em; text-transform: uppercase; }
+
+  /* Sensor legend overlay */
+  .legend {
+    position: absolute; top: 80px; right: 28px;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .leg-item {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.75);
+    border-radius: 6px; padding: 5px 10px;
+    font-size: 0.7rem; font-weight: 600; color: #2a3a5a;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+  }
+  .leg-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="ui">
+  <div class="title">
+    <h1>DERMASCAN AI</h1>
+    <p>Veterinary Skin Diagnostic · CUVET Hackathon 2026</p>
+  </div>
+
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#e74c3c"></div>pH ISFET (12 o'clock)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#e67e22"></div>VOC MOX (center)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#27ae60"></div>Imp+ (3 o'clock)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#2ecc71"></div>Imp− (9 o'clock)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#3498db"></div>H₂O Capacitive (6)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#9b59b6"></div>Enz. Keratinase (7–8)</div>
+  </div>
+
+  <div class="bottom">
+    <div class="specs">
+      <div class="sp"><div class="v">185 mm</div><div class="l">Total</div></div>
+      <div class="sp"><div class="v">Ø 28 mm</div><div class="l">Body</div></div>
+      <div class="sp"><div class="v">Ø 16 mm</div><div class="l">Tip Contact</div></div>
+      <div class="sp"><div class="v">18° Taper</div><div class="l">Fur Penetration</div></div>
+      <div class="sp"><div class="v">6 Sensors</div><div class="l">SS 316L Tip</div></div>
+      <div class="sp"><div class="v">IP54</div><div class="l">Splash-proof</div></div>
+    </div>
+    <div class="view-btns">
+      <button class="vb on" id="bAuto" onclick="setAuto()">⟳ Auto</button>
+      <button class="vb" onclick="goView(0.5,-0.22)">Iso</button>
+      <button class="vb" onclick="goView(Math.PI/2,0)">Side</button>
+      <button class="vb" onclick="goView(0.01,0.01)">Front (Tip)</button>
+      <button class="vb" onclick="goView(-Math.PI/2+0.01,0.01)">Rear</button>
+      <button class="vb" onclick="goView(0.1,-Math.PI/2+0.1)">Top</button>
+    </div>
+    <div class="hint">Drag · Scroll to zoom</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════
+//  DermaScan AI — 3D v4  (positions corrected from PDF)
+//
+//  X-axis = length axis (left = tip front, right = rear cap)
+//  All mm, origin = center of device
+//
+//  CORRECTIONS vs v3:
+//  - LED Ring at tip-body junction (x≈-52.5) ← correct side
+//  - Battery status LEDs between SCAN & PWR buttons on TOP
+//  - Sensor labels visible on contact face (front view)
+//  - SCAN btn at exactly 80mm from tip front = x = -92.5+80+5 = -7.5 center
+//  - PWR btn rear zone
+//  - Battery LEDs: between SCAN and PWR (not near LED ring)
+// ═══════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('c');
+const W = () => window.innerWidth, H = () => window.innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(W(), H());
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.physicallyCorrectLights = true;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe8ebf0);
+
+const camera = new THREE.PerspectiveCamera(36, W()/H(), 0.1, 800);
+camera.position.set(25, 15, 88);
+camera.lookAt(0,0,0);
+
+// ── Lighting ─────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+
+const sun = new THREE.DirectionalLight(0xfffaf0, 1.8);
+sun.position.set(50, 90, 70);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left:-120, right:120, top:60, bottom:-60, near:1, far:500 });
+sun.shadow.bias = -0.001;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0xd0e8ff, 0.8);
+fill.position.set(-60, 10, 50);
+scene.add(fill);
+
+const rim = new THREE.DirectionalLight(0xffffff, 0.55);
+rim.position.set(0, -20, -90);
+scene.add(rim);
+
+scene.add(new THREE.HemisphereLight(0xcce0ff, 0x888890, 0.4));
+
+// ── Dimensions (all mm) ───────────────────────────────────────────────
+const HALF   = 92.5;   // 185/2
+
+// X positions (origin = center)
+const X_TIP_FRONT = -HALF;          // -92.5  ← front of tip (contact face)
+const X_TIP_BACK  = -HALF + 40;     // -52.5  ← tip/body junction
+const X_LED_MID   = X_TIP_BACK + 3.5; // -49.0  ← LED ring center
+const X_BODY_CTR  = X_TIP_BACK + 65;  // +12.5  ← center of 130mm body
+const X_GRIP_CTR  = X_TIP_BACK + 37.5 + 27.5; // -52.5+65 = +12.5 ... recalc:
+// grip starts at body_start + 37.5 from body start
+// body starts at -52.5, grip starts at -52.5+37.5 = -15, center = -15+27.5 = +12.5
+const X_GRIP_START = X_TIP_BACK + 37.5;  // -15.0
+const X_GRIP_END   = X_GRIP_START + 55;  //  +40.0
+const X_CAP_START  = X_TIP_BACK + 130;   // +77.5
+const X_CAP_END    = HALF;               // +92.5
+
+// Button positions (measured from tip FRONT = -92.5)
+// SCAN btn: 80mm from tip → center at -92.5 + 80 + 5 = -7.5
+const X_SCAN_CTR = X_TIP_FRONT + 80 + 5;   // -7.5
+// PWR btn: rear zone, ~120mm from tip → center at -92.5+120+4 = +31.5
+const X_PWR_CTR  = X_TIP_FRONT + 120 + 4;  // +31.5
+// Battery LEDs: between SCAN and PWR → ~+10 to +25
+const X_LEDS_START = X_SCAN_CTR + 18;      // +10.5
+
+// OLED: 70mm from tip, 24mm wide → center at -92.5+70+12 = -10.5
+const X_OLED_CTR = X_TIP_FRONT + 70 + 12;  // -10.5
+
+// ── Material factory ──────────────────────────────────────────────────
+const matABS = new THREE.MeshStandardMaterial({
+  color: 0xd8e4f4, roughness: 0.28, metalness: 0.05,
+});
+const matSS = new THREE.MeshStandardMaterial({
+  color: 0xb5c2d0, roughness: 0.07, metalness: 0.93,
+});
+const matTPE = new THREE.MeshStandardMaterial({
+  color: 0x1c1c26, roughness: 0.9, metalness: 0.0,
+});
+const matKnurl = new THREE.MeshStandardMaterial({
+  color: 0x282835, roughness: 0.95, metalness: 0.0,
+});
+const matLEDGreen = new THREE.MeshStandardMaterial({
+  color: 0x00ee66,
+  emissive: new THREE.Color(0x00ee66),
+  emissiveIntensity: 2.2,
+  roughness: 0.15, metalness: 0.1,
+});
+const matScreen = new THREE.MeshStandardMaterial({
+  color: 0x050c18,
+  emissive: new THREE.Color(0x0820508),
+  emissiveIntensity: 1.1,
+  roughness: 0.04, metalness: 0.4,
+});
+const matScanBtn = new THREE.MeshStandardMaterial({
+  color: 0x0f1d38,
+  emissive: new THREE.Color(0x061235),
+  emissiveIntensity: 0.7,
+  roughness: 0.4, metalness: 0.25,
+});
+const matPwrBtn = new THREE.MeshStandardMaterial({
+  color: 0x1a3a1a,
+  emissive: new THREE.Color(0x0a2a0a),
+  emissiveIntensity: 0.5,
+  roughness: 0.4, metalness: 0.2,
+});
+const matUSB = new THREE.MeshStandardMaterial({
+  color: 0x6a7888, roughness: 0.2, metalness: 0.88,
+});
+const matRecess = new THREE.MeshStandardMaterial({
+  color: 0x1e2838, roughness: 0.6, metalness: 0.3,
+});
+
+function sensorMat(col) {
+  return new THREE.MeshStandardMaterial({
+    color: col, emissive: new THREE.Color(col),
+    emissiveIntensity: 0.8, roughness: 0.2, metalness: 0.3,
+  });
+}
+
+// ── Geometry helpers ──────────────────────────────────────────────────
+function cylinder(r, len, mat, seg=64) {
+  const g = new THREE.CylinderGeometry(r, r, len, seg, 1, false);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI/2));
+  const m = new THREE.Mesh(g, mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+function disk(r, mat, seg=60) {
+  const g = new THREE.CircleGeometry(r, seg);
+  const m = new THREE.Mesh(g, mat);
+  m.castShadow = false; m.receiveShadow = true;
+  return m;
+}
+function box(w, h, d, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+function sphere(r, mat, seg=20) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, seg, seg), mat);
+  m.castShadow = true;
+  return m;
+}
+function latheMesh(pts, mat, seg=80) {
+  const g = new THREE.LatheGeometry(pts, seg);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationZ(-Math.PI/2));
+  const m = new THREE.Mesh(g, mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+
+// ── Build device ──────────────────────────────────────────────────────
+const group = new THREE.Group();
+scene.add(group);
+
+// 1. SENSOR TIP — SS316L, tapered Ø16→Ø28 over 40mm
+// LatheGeometry points: [radius, y_along_axis]
+// tip front (contact) = r8, tip back (body junction) = r14
+const tip = latheMesh([
+  new THREE.Vector2(8,  0),
+  new THREE.Vector2(8.4, 4),    // slight inner radius for recess look
+  new THREE.Vector2(14, 40),
+], matSS, 96);
+tip.position.x = X_TIP_FRONT;  // LatheGeometry origin is at tip front
+group.add(tip);
+
+// 2. Contact face — REMOVE the large dark face disk entirely
+// The tip geometry (LatheGeometry) already shows the stainless front edge
+// Just place sensors directly on the tip face — sensors ARE the face
+
+// 3. SENSOR ARRAY — directly on tip front face, no background disc
+// X_TIP_FRONT = front of tip. Sensors face toward -X (viewer).
+// Y=up, Z=right when viewed from front.
+// PDF layout:
+//   pH ISFET   12 o'clock  +Y        ORANGE #e67e22
+//   VOC MOX    center                 ORANGE #e67e22
+//   Imp+ pole  9 o'clock   -Z        GREEN  #27ae60
+//   Imp- pole  3 o'clock   +Z        GREEN  #27ae60
+//   H2O Cap.   6 o'clock   -Y        BLUE   #2980b9
+//   Enz.Kerat  7-8 o'clock -Y,-Z     PURPLE #8e44ad
+
+const SENSOR_DEFS = [
+  { y:  3.8, z:  0.0, col: 0xe67e22, r: 1.5 }, // 12 pH
+  { y:  0.0, z: -3.8, col: 0x27ae60, r: 1.5 }, // 9  Imp+
+  { y:  0.0, z:  3.8, col: 0x27ae60, r: 1.5 }, // 3  Imp-
+  { y: -3.8, z:  0.0, col: 0x2980b9, r: 1.5 }, // 6  H2O
+  { y: -2.7, z: -2.7, col: 0x8e44ad, r: 1.5 }, // 7-8 Enz
+  { y:  0.0, z:  0.0, col: 0xe67e22, r: 1.8 }, // center VOC
+];
+
+for (const s of SENSOR_DEFS) {
+  // Sensor = flat circle, placed just in FRONT of tip face (slightly more positive X than tip front)
+  const sDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(s.r, 32),
+    new THREE.MeshStandardMaterial({
+      color: s.col,
+      emissive: new THREE.Color(s.col),
+      emissiveIntensity: 2.0,
+      roughness: 0.08,
+      metalness: 0.05,
+      depthWrite: true,
+    })
+  );
+  sDisc.rotation.y = -Math.PI / 2;
+  // Place slightly proud of tip face so they render in front
+  sDisc.position.set(X_TIP_FRONT - 0.1, s.y, s.z);
+  sDisc.renderOrder = 2;
+  group.add(sDisc);
+
+  // White border ring
+  const border = new THREE.Mesh(
+    new THREE.RingGeometry(s.r + 0.05, s.r + 0.45, 32),
+    new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.2,
+      metalness: 0.0,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+    })
+  );
+  border.rotation.y = -Math.PI / 2;
+  border.position.set(X_TIP_FRONT - 0.12, s.y, s.z);
+  border.renderOrder = 2;
+  group.add(border);
+}
+
+// Thin cross lines (dashed-look connector, like PDF diagram)
+const crossMat = new THREE.MeshStandardMaterial({
+  color: 0x6688aa, transparent: true, opacity: 0.5,
+});
+const hLine = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 6.8), crossMat);
+hLine.position.set(X_TIP_FRONT - 0.14, 0, 0);
+hLine.renderOrder = 1;
+group.add(hLine);
+const vLine = new THREE.Mesh(new THREE.BoxGeometry(0.15, 6.8, 0.15), crossMat);
+vLine.position.set(X_TIP_FRONT - 0.14, 0, 0);
+vLine.renderOrder = 1;
+group.add(vLine);
+
+
+// 4. LED RING — at tip-body junction (X_TIP_BACK), 7mm wide, Ø28
+// ★ This is on the LEFT side (near tip), NOT near SCAN button
+const ledRing = cylinder(14.2, 7, matLEDGreen, 80);
+ledRing.position.x = X_LED_MID;  // center of 7mm ring = -49.0
+group.add(ledRing);
+
+// LED glow halo
+const ledGlowMat = new THREE.MeshStandardMaterial({
+  color: 0x00ff77, emissive: new THREE.Color(0x00ff77),
+  emissiveIntensity: 0.45, transparent: true, opacity: 0.12,
+  side: THREE.BackSide, roughness: 1.0,
+});
+const ledGlow = cylinder(16.5, 9, ledGlowMat, 64);
+ledGlow.position.x = X_LED_MID;
+group.add(ledGlow);
+
+// LED point light for scene illumination
+const ledPt = new THREE.PointLight(0x00ff88, 1.5, 40);
+ledPt.position.set(X_LED_MID, 0, 0);
+group.add(ledPt);
+
+// 5. MAIN BODY — ABS White, Ø28, 130mm
+const body = cylinder(14, 130, matABS, 80);
+body.position.x = X_TIP_BACK + 65;  // center of 130mm
+group.add(body);
+
+// 6. RUBBER GRIP — TPE Black, Ø28.5 (proud), 55mm
+// Starts at body_start + 37.5mm = -52.5+37.5 = -15.0
+const grip = cylinder(14.5, 55, matTPE, 80);
+grip.position.x = X_GRIP_START + 27.5;  // +12.5 (center)
+group.add(grip);
+
+// Grip end-caps
+const gcL = disk(14.5, matTPE); gcL.rotation.y = -Math.PI/2; gcL.position.x = X_GRIP_START; group.add(gcL);
+const gcR = disk(14.5, matTPE); gcR.rotation.y =  Math.PI/2; gcR.position.x = X_GRIP_END;   group.add(gcR);
+
+// Knurl ridges
+for (let i = 0; i < 8; i++) {
+  const rx = X_GRIP_START + 3.5 + i * (55-7)/7;
+  const k = cylinder(15.15, 1.5, matKnurl, 64);
+  k.position.x = rx;
+  group.add(k);
+}
+
+// 7. REAR CAP — ABS, Ø28→Ø20, 15mm
+const cap = latheMesh([
+  new THREE.Vector2(14, 0),
+  new THREE.Vector2(12, 8),
+  new THREE.Vector2(10, 15),
+], matABS, 72);
+cap.position.x = X_CAP_START;
+group.add(cap);
+
+const rearFace = disk(10, new THREE.MeshStandardMaterial({ color: 0xbccadc, roughness: 0.35, metalness: 0.1 }));
+rearFace.rotation.y = Math.PI/2;
+rearFace.position.x = X_CAP_END;
+group.add(rearFace);
+
+// 8. OLED DISPLAY — 24×10mm, top surface (y=+14), 70mm from tip front
+// Center X = -92.5 + 70 + 12 = -10.5
+const oledBezel = box(24, 1.4, 10, new THREE.MeshStandardMaterial({ color:0x080e1a, roughness:0.3, metalness:0.55 }));
+oledBezel.position.set(X_OLED_CTR, 14.15, 0);
+group.add(oledBezel);
+
+const oledScreen = box(22.5, 0.6, 8.6, matScreen);
+oledScreen.position.set(X_OLED_CTR, 14.65, 0);
+group.add(oledScreen);
+
+// Screen content bars (emissive)
+const makeBar = (w, d, col, x, z) => {
+  const b = box(w, 0.3, d, new THREE.MeshStandardMaterial({
+    color: col, emissive: new THREE.Color(col), emissiveIntensity: 2.0, roughness: 0.05,
+  }));
+  b.position.set(x, 14.97, z);
+  return b;
+};
+group.add(makeBar(8,  1.2, 0x00aaff, X_OLED_CTR - 3.5, -2.0));
+group.add(makeBar(7,  1.2, 0x00ff88, X_OLED_CTR + 3.0,  2.0));
+group.add(makeBar(14, 0.6, 0x003366, X_OLED_CTR,        0));
+
+// 9. SCAN BUTTON — 10×4×2mm, top (y=+14), 80mm from tip
+// Center: -92.5 + 80 + 5 = -7.5 (same as X_SCAN_CTR)
+const scanBtn = box(10, 2.2, 4, matScanBtn);
+scanBtn.position.set(X_SCAN_CTR, 14.85, 0);
+group.add(scanBtn);
+
+const scanTop = box(9.5, 0.6, 3.6, new THREE.MeshStandardMaterial({
+  color: 0x2255cc, emissive: new THREE.Color(0x1144bb), emissiveIntensity: 1.0, roughness: 0.15,
+}));
+scanTop.position.set(X_SCAN_CTR, 15.65, 0);
+group.add(scanTop);
+
+// 10. BATTERY STATUS LEDs — between SCAN and PWR, on TOP surface
+// ★ Per PDF image: 3 LEDs sit between SCAN and PWR buttons (not near LED ring)
+// Colors per PDF labels: "76%" green, "53%" green/orange, "82%" green
+const batColors  = [0x00dd44, 0xff8800, 0x00dd44];
+const batEmissive= [0x00cc33, 0xff6600, 0x00cc33];
+for (let i = 0; i < 3; i++) {
+  const lx = X_LEDS_START + i * 5;
+  const led = sphere(1.35, new THREE.MeshStandardMaterial({
+    color: batColors[i],
+    emissive: new THREE.Color(batEmissive[i]),
+    emissiveIntensity: 2.0, roughness: 0.12,
+  }));
+  led.position.set(lx, 14.6, 0);
+  group.add(led);
+
+  // subtle glow disc under each LED
+  const gd = new THREE.Mesh(
+    new THREE.CircleGeometry(2.5, 16),
+    new THREE.MeshStandardMaterial({
+      color: batColors[i], emissive: new THREE.Color(batColors[i]),
+      emissiveIntensity: 0.3, transparent: true, opacity: 0.3,
+    })
+  );
+  gd.rotation.x = -Math.PI/2;
+  gd.position.set(lx, 14.55, 0);
+  group.add(gd);
+}
+
+// 11. PWR BUTTON — 8×4mm, rear zone top
+const pwrBtn = box(8, 2.0, 4, matPwrBtn);
+pwrBtn.position.set(X_PWR_CTR, 14.8, 0);
+group.add(pwrBtn);
+
+const pwrTop = box(7.5, 0.5, 3.5, new THREE.MeshStandardMaterial({
+  color: 0x33bb33, emissive: new THREE.Color(0x22aa22), emissiveIntensity: 0.9, roughness: 0.15,
+}));
+pwrTop.position.set(X_PWR_CTR, 15.55, 0);
+group.add(pwrTop);
+
+// 12. USB-C — recessed at rear underside (y = -9, near rear cap)
+const usbBody = box(9, 3.3, 2.8, matUSB);
+usbBody.position.set(X_CAP_END - 6, -9.5, 0);
+group.add(usbBody);
+
+const usbRecess = box(9.8, 4.0, 1.8, new THREE.MeshStandardMaterial({
+  color: 0x0d1218, roughness: 0.7, metalness: 0.3,
+}));
+usbRecess.position.set(X_CAP_END - 5.5, -9.5, -1.0);
+group.add(usbRecess);
+
+// 13. Ground plane
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(500, 500),
+  new THREE.MeshStandardMaterial({ color: 0xe0e4eb, roughness: 0.88, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -22;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ── Orbit camera ──────────────────────────────────────────────────────
+let theta = 0.5, phi = -0.22, radius = 88;
+let tTheta = theta, tPhi = phi, tRadius = radius;
+let autoRot = true;
+let drag = false, px = 0, py = 0;
+
+const el = renderer.domElement;
+el.addEventListener('mousedown', e => { drag=true; px=e.clientX; py=e.clientY; autoRot=false; document.getElementById('bAuto').classList.remove('on'); });
+window.addEventListener('mouseup', () => drag=false);
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  tTheta -= (e.clientX-px)*0.007;
+  tPhi   -= (e.clientY-py)*0.005;
+  tPhi = Math.max(-1.45, Math.min(1.45, tPhi));
+  px=e.clientX; py=e.clientY;
+});
+el.addEventListener('wheel', e => {
+  tRadius += e.deltaY*0.07; tRadius=Math.max(20,Math.min(220,tRadius)); e.preventDefault();
+},{passive:false});
+
+let t0x=0,t0y=0;
+el.addEventListener('touchstart', e=>{ drag=true; t0x=e.touches[0].clientX; t0y=e.touches[0].clientY; autoRot=false; },{passive:true});
+window.addEventListener('touchend', ()=>drag=false);
+window.addEventListener('touchmove', e=>{
+  if(!drag)return;
+  tTheta-=(e.touches[0].clientX-t0x)*0.007;
+  tPhi  -=(e.touches[0].clientY-t0y)*0.005;
+  tPhi=Math.max(-1.45,Math.min(1.45,tPhi));
+  t0x=e.touches[0].clientX; t0y=e.touches[0].clientY;
+},{passive:true});
+
+function goView(th,ph){ autoRot=false; document.getElementById('bAuto').classList.remove('on'); tTheta=th; tPhi=ph; tRadius=80; }
+function setAuto(){ autoRot=true; document.getElementById('bAuto').classList.add('on'); tPhi=-0.22; tRadius=88; }
+
+// ── Render loop ───────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const t = clock.getElapsedTime();
+
+  if(autoRot){ tTheta = t*0.32; tPhi = -0.14+Math.sin(t*0.22)*0.11; }
+
+  theta  += (tTheta-theta)  *0.075;
+  phi    += (tPhi-phi)      *0.075;
+  radius += (tRadius-radius)*0.075;
+
+  camera.position.set(
+    radius*Math.sin(theta)*Math.cos(phi),
+    radius*Math.sin(phi),
+    radius*Math.cos(theta)*Math.cos(phi)
+  );
+  camera.lookAt(0,0,0);
+
+  // LED ring pulse
+  const p = 0.9+Math.sin(t*2.6)*0.7;
+  matLEDGreen.emissiveIntensity = p;
+  ledGlow.material.opacity = 0.07+Math.sin(t*2.6)*0.07;
+  ledPt.intensity = 0.8+Math.sin(t*2.6)*0.6;
+
+  // OLED breathe
+  matScreen.emissiveIntensity = 0.85+Math.sin(t*1.1)*0.22;
+
+  // Scan button subtle pulse
+  matScanBtn.emissiveIntensity = 0.45+Math.sin(t*1.8)*0.25;
+
+  renderer.render(scene, camera);
+}
+tick();
+
+window.addEventListener('resize',()=>{
+  camera.aspect=W()/H();
+  camera.updateProjectionMatrix();
+  renderer.setSize(W(),H());
+});
+</script>
+</body>
+</html>
